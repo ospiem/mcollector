@@ -3,20 +3,25 @@ package agent
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
 	"net"
 	"net/http"
+	"os"
 	"runtime"
 	"strconv"
 	"time"
 
-	"github.com/ilnsm/mcollector/internal/models"
+	"github.com/ospiem/mcollector/internal/models"
+	"github.com/ospiem/mcollector/internal/tools"
+	"github.com/rs/zerolog"
 
-	"github.com/ilnsm/mcollector/internal/agent/config"
-	"github.com/rs/zerolog/log"
+	"github.com/ospiem/mcollector/internal/agent/config"
 )
 
 const defaultSchema = "http://"
@@ -34,8 +39,9 @@ func Run() error {
 	if err != nil {
 		return fmt.Errorf("run agent error: %w", err)
 	}
-
-	log.Info().Msgf("Start server\nPush to %s\nCollecting metrics every %v\n"+
+	logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
+	tools.SetLogLevel(cfg.LogLevel)
+	logger.Info().Msgf("Start server\nPush to %s\nCollecting metrics every %v\n"+
 		"Send metrics every %v\n", cfg.Endpoint, cfg.PollInterval, cfg.ReportInterval)
 
 	m := runtime.MemStats{}
@@ -54,14 +60,14 @@ func Run() error {
 		case <-mTicker.C:
 			err := GetMetrics(&m, metrics)
 			if err != nil {
-				log.Err(err)
+				logger.Err(err)
 			}
 			pollCounter++
 		case <-reqTicker.C:
 			for name, value := range metrics {
 				v, err := strconv.ParseFloat(value, 64)
 				if err != nil {
-					log.Error().Msg("error convert string to float")
+					logger.Error().Msg("error convert string to float")
 					break
 				}
 				metricSlice = append(metricSlice, models.Metrics{MType: gauge, ID: name, Value: &v})
@@ -74,12 +80,12 @@ func Run() error {
 			sleepTime := 1 * time.Second
 			for {
 				var opError *net.OpError
-				err = doRequestWithJSON(cfg.Endpoint, metricSlice, client)
+				err = doRequestWithJSON(cfg, metricSlice, client, logger)
 				if err == nil {
 					break
 				}
 				if errors.As(err, &opError) || errors.Is(err, errRetryableHTTPStatusCode) {
-					log.Error().Err(err).Msgf("%s, will retry in %v", cannotCreateRequest, sleepTime)
+					logger.Error().Err(err).Msgf("%s, will retry in %v", cannotCreateRequest, sleepTime)
 					time.Sleep(sleepTime)
 					attempt++
 					sleepTime += repeatFactor * time.Second
@@ -88,7 +94,7 @@ func Run() error {
 					}
 					break
 				}
-				log.Error().Err(err).Msgf("cannot do request, failed %d times", retryAttempts)
+				logger.Error().Err(err).Msgf("cannot do request, failed %d times", retryAttempts)
 			}
 			metricSlice = nil
 			pollCounter = 0
@@ -96,7 +102,7 @@ func Run() error {
 	}
 }
 
-func doRequestWithJSON(endpoint string, metrics []models.Metrics, client *http.Client) error {
+func doRequestWithJSON(cfg config.Config, metrics []models.Metrics, client *http.Client, l zerolog.Logger) error {
 	const wrapError = "do request error"
 
 	jsonData, err := json.Marshal(metrics)
@@ -113,15 +119,18 @@ func doRequestWithJSON(endpoint string, metrics []models.Metrics, client *http.C
 		return fmt.Errorf("close gzip in %s: %w", wrapError, err)
 	}
 
-	endpoint = fmt.Sprintf("%v%v%v", defaultSchema, endpoint, updatePath)
+	ep := fmt.Sprintf("%v%v%v", defaultSchema, cfg.Endpoint, updatePath)
 
-	request, err := http.NewRequest(http.MethodPost, endpoint, &buf)
+	request, err := http.NewRequest(http.MethodPost, ep, &buf)
 	if err != nil {
 		return fmt.Errorf("generate request %s: %w", wrapError, err)
 	}
 
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Content-Encoding", "gzip")
+	if cfg.Key != "" {
+		request.Header.Set("HashSHA256", generateHash(cfg.Key, jsonData, l))
+	}
 
 	r, err := client.Do(request)
 	if err != nil {
@@ -150,4 +159,19 @@ func isStatusCodeRetryable(code int) bool {
 	default:
 		return false
 	}
+}
+
+func generateHash(key string, data []byte, l zerolog.Logger) string {
+	logger := l.With().Str("func", "generateHash").Logger()
+	h := hmac.New(sha256.New, []byte(key))
+	_, err := h.Write(data)
+	if err != nil {
+		logger.Error().Err(err).Msg("cannot hash data")
+		return ""
+	}
+
+	hash := hex.EncodeToString(h.Sum(nil))
+	logger.Debug().Msg(hash)
+
+	return hash
 }

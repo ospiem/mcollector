@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ilnsm/mcollector/internal/models"
-	"github.com/ilnsm/mcollector/internal/server/config"
-	"github.com/ilnsm/mcollector/internal/storage/file"
-	memorystorage "github.com/ilnsm/mcollector/internal/storage/memory"
-	"github.com/ilnsm/mcollector/internal/storage/postgres"
+	"github.com/ospiem/mcollector/internal/models"
+	"github.com/ospiem/mcollector/internal/storage/config"
+	"github.com/ospiem/mcollector/internal/storage/file"
+	memorystorage "github.com/ospiem/mcollector/internal/storage/memory"
+	"github.com/ospiem/mcollector/internal/storage/postgres"
 )
 
 type Storage interface {
@@ -20,6 +20,10 @@ type Storage interface {
 	GetGauges(ctx context.Context) (map[string]float64, error)
 	InsertBatch(ctx context.Context, metrics []models.Metrics) error
 	Ping(ctx context.Context) error
+}
+
+type Config struct {
+	//TODO: implement
 }
 
 func New(ctx context.Context, cfg config.Config) (Storage, error) {

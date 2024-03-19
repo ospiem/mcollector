@@ -1,3 +1,4 @@
+// Package helper provides functionality for setting the global log level.
 package helper
 
 import (

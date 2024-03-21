@@ -16,22 +16,25 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	expr := func(x *ast.ExprStmt) {
 		// check that the expression represents a function call
 		// with an explicit exit
-		if call, ok := x.X.(*ast.CallExpr); ok {
-			if isExplitExit(call) {
+		if id, ok := x.Fun.(*ast.Ident); ok {
+			if id.Name == "exit" {
 				pass.Reportf(x.Pos(), "explicit exit call")
 			}
 		}
 	}
 	for _, file := range pass.Files {
-		if file.Name.String() != "main" {
+		if file.Name.Name != "main" {
 			continue
 		}
 		// using the ast.Inspect function, we go through all the nodes of the AST
 		ast.Inspect(file, func(node ast.Node) bool {
 			if f, ok := node.(*ast.FuncDecl); ok {
 				if f.Name.Name == "main" {
-					if x, ok := node.(*ast.ExprStmt); ok {
-						expr(x)
+					// Inspect the body of the main function for ExprStmt nodes
+					for _, stmt := range f.Body.List {
+						if x, ok := stmt.(*ast.ExprStmt); ok {
+							expr(x)
+						}
 					}
 				}
 			}
@@ -39,14 +42,4 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		})
 	}
 	return nil, nil
-}
-
-func isExplitExit(call *ast.CallExpr) bool {
-	// check that the function call is exit
-	if id, ok := call.Fun.(*ast.Ident); ok {
-		if id.Name == "exit" {
-			return true
-		}
-	}
-	return false
 }

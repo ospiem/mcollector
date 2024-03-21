@@ -31,6 +31,6 @@ func main() {
 	api := transport.New(cfg, s, logger)
 
 	if err := api.Run(); err != nil {
-		logger.Fatal().Err(err).Send()
+		os.Exqwqeit(1)
 	}
 }
